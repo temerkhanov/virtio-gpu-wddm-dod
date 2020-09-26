@@ -92,14 +92,7 @@ NTSTATUS VioGpuDod::StartDevice(_In_  DXGK_START_INFO*   pDxgkStartInfo,
         return Status;
     }
 
-    if (CheckHardware())
-    {
-        m_pHWDevice = new(NonPagedPoolNx) VioGpuAdapter(this);
-    }
-    else
-    {
-        m_pHWDevice = new(NonPagedPoolNx) VgaAdapter(this);
-    }
+    m_pHWDevice = new(NonPagedPoolNx) VioGpuAdapter(this);
 
     if (!m_pHWDevice)
     {
@@ -1918,6 +1911,7 @@ D3DDDI_VIDEO_PRESENT_SOURCE_ID VioGpuDod::FindSourceForTarget(D3DDDI_VIDEO_PRESE
 
 #pragma code_seg(pop) // End Non-Paged Code
 
+#if 0
 VgaAdapter::VgaAdapter(_In_ VioGpuDod* pVioGpuDod) : IVioGpuAdapter(pVioGpuDod)
 {
     m_ModeInfo = NULL;
@@ -1993,79 +1987,9 @@ NTSTATUS VgaAdapter::GetModeList(DXGK_DISPLAY_INFORMATION* pDispInfo)
     NTSTATUS Status = STATUS_SUCCESS;
     DbgPrint(TRACE_LEVEL_VERBOSE, ("---> %s\n", __FUNCTION__));
 
-    Length = 0x400;
-    Status = x86BiosAllocateBuffer (&Length, &m_Segment, &m_Offset);
-    if (!NT_SUCCESS (Status))
-    {
-        DbgPrint(TRACE_LEVEL_ERROR, ("x86BiosAllocateBuffer failed with Status: 0x%X\n", Status));
-        return Status;
-    }
-    DbgPrint(TRACE_LEVEL_INFORMATION, ("x86BiosAllocateBuffer 0x%x (%x.%x)\n", VbeInfo.VideoModePtr, m_Segment, m_Offset));
-
-    Status = x86BiosWriteMemory (m_Segment, m_Offset, "VBE2", 4);
-
-    if (!NT_SUCCESS (Status))
-    {
-        DbgPrint(TRACE_LEVEL_ERROR, ("x86BiosWriteMemory failed with Status: 0x%X\n", Status));
-        return Status;
-    }
-
-    X86BIOS_REGISTERS regs = {0};
-    regs.SegEs = m_Segment;
-    regs.Edi = m_Offset;
-    regs.Eax = 0x4F00;
-    if (!x86BiosCall (0x10, &regs))
-    {
-        DbgPrint(TRACE_LEVEL_ERROR, ("x86BiosCall failed\n"));
-        return STATUS_UNSUCCESSFUL;
-    }
-
-    Status = x86BiosReadMemory (m_Segment, m_Offset, &VbeInfo, sizeof (VbeInfo));
-    if (!NT_SUCCESS (Status))
-    {
-        DbgPrint(TRACE_LEVEL_ERROR, ("x86BiosReadMemory failed with Status: 0x%X\n", Status));
-        return Status;
-    }
-
-    if (!RtlEqualMemory(VbeInfo.Signature, "VESA", 4))
-    {
-        DbgPrint(TRACE_LEVEL_ERROR, ("No VBE BIOS present\n"));
-        return STATUS_UNSUCCESSFUL;
-    }
-
-    DbgPrint(TRACE_LEVEL_INFORMATION, ("VBE BIOS Present (%d.%d, %8ld Kb)\n", VbeInfo.Version / 0x100, VbeInfo.Version & 0xFF, VbeInfo.TotalMemory * 64));
-    DbgPrint(TRACE_LEVEL_INFORMATION, ("Capabilities = 0x%x\n", VbeInfo.Capabilities));
-    DbgPrint(TRACE_LEVEL_INFORMATION, ("VideoModePtr = 0x%x (0x%x.0x%x)\n", VbeInfo.VideoModePtr, HIWORD( VbeInfo.VideoModePtr), LOWORD( VbeInfo.VideoModePtr)));
     DbgPrint(TRACE_LEVEL_INFORMATION, ("pDispInfo = %p %dx%d@%d\n", pDispInfo, Width, Height, BitsPerPixel));
 
-   for (ModeCount = 0; ; ModeCount++)
-   {
-      /* Read the VBE mode number. */
-        Status = x86BiosReadMemory (
-                    HIWORD(VbeInfo.VideoModePtr),
-                    LOWORD(VbeInfo.VideoModePtr) + (ModeCount << 1),
-                    &ModeTemp,
-                    sizeof(ModeTemp));
-
-        if (!NT_SUCCESS (Status))
-        {
-            DbgPrint(TRACE_LEVEL_ERROR, ("x86BiosReadMemory failed with Status: 0x%X\n", Status));
-            break;
-        }
-      /* End of list? */
-        if (ModeTemp == 0xFFFF || ModeTemp == 0)
-        {
-            break;
-        }
-   }
-
-    DbgPrint(TRACE_LEVEL_INFORMATION, ("ModeCount %d\n", ModeCount));
     m_pVioGpuDod->SetHardwareInit(TRUE);
-
-    delete [] reinterpret_cast<BYTE*>(m_ModeInfo);
-    delete [] reinterpret_cast<BYTE*>(m_ModeNumbers);
-    m_ModeInfo = NULL;
-    m_ModeNumbers = NULL;
 
     m_ModeInfo = reinterpret_cast<PVIDEO_MODE_INFORMATION> (new (PagedPool) BYTE[sizeof (VIDEO_MODE_INFORMATION) * ModeCount]);
     if (!m_ModeInfo)
@@ -2076,94 +2000,38 @@ NTSTATUS VgaAdapter::GetModeList(DXGK_DISPLAY_INFORMATION* pDispInfo)
     }
     RtlZeroMemory(m_ModeInfo, sizeof (VIDEO_MODE_INFORMATION) * ModeCount);
 
-    m_ModeNumbers = reinterpret_cast<PUSHORT> (new (PagedPool)  BYTE [sizeof (USHORT) * ModeCount]);
-    if (!m_ModeNumbers)
+    //TODO: Put mode list into the registry
+    m_ModeInfo[Idx].Length = sizeof(VIDEO_MODE_INFORMATION);
+    m_ModeInfo[Idx].ModeIndex = Idx;
+    m_ModeInfo[Idx].VisScreenWidth = pModeInfo->XResolution;
+    m_ModeInfo[Idx].VisScreenHeight = pModeInfo->YResolution;
+    m_ModeInfo[Idx].ScreenStride = pModeInfo->LinBytesPerScanLine;
+    m_ModeInfo[Idx].NumberOfPlanes = pModeInfo->NumberOfPlanes;
+    m_ModeInfo[Idx].BitsPerPlane = pModeInfo->BitsPerPixel / pModeInfo->NumberOfPlanes;
+    m_ModeInfo[Idx].Frequency = 60;
+    m_ModeInfo[Idx].XMillimeter = pModeInfo->XResolution * 254 / 720;
+    m_ModeInfo[Idx].YMillimeter = pModeInfo->YResolution * 254 / 720;
+
+    if (pModeInfo->BitsPerPixel == 15 && pModeInfo->NumberOfPlanes == 1)
     {
-        Status = STATUS_NO_MEMORY;
-        DbgPrint(TRACE_LEVEL_ERROR, ("VgaAdapter::GetModeList failed to allocate m_ModeNumbers memory\n"));
-        return Status;
-    }
-    RtlZeroMemory(m_ModeNumbers, sizeof (USHORT) * ModeCount);
-
-    m_CurrentMode = 0;
-    DbgPrint(TRACE_LEVEL_INFORMATION, ("m_ModeInfo = 0x%p, m_ModeNumbers = 0x%p\n", m_ModeInfo, m_ModeNumbers));
-    if (Width == 0 || Height == 0 || BitsPerPixel != VGA_BPP)
-    {
-        Width = MIN_WIDTH_SIZE;
-        Height = MIN_HEIGHT_SIZE;
-        BitsPerPixel = VGA_BPP;
-    }
-    for (CurrentMode = 0, SuitableModeCount = 0;
-         CurrentMode < ModeCount;
-         CurrentMode++)
-    {
-        Status = x86BiosReadMemory (
-                    HIWORD(VbeInfo.VideoModePtr),
-                    LOWORD(VbeInfo.VideoModePtr) + (CurrentMode << 1),
-                    &ModeTemp,
-                    sizeof(ModeTemp));
-
-        if (!NT_SUCCESS (Status))
-        {
-            DbgPrint(TRACE_LEVEL_ERROR, ("x86BiosReadMemory failed with Status: 0x%X\n", Status));
-            break;
-        }
-
-        RtlZeroMemory(&regs, sizeof(regs));
-        regs.Eax = 0x4F01;
-        regs.Ecx = ModeTemp;
-        regs.Edi = m_Offset + sizeof (VbeInfo);
-        regs.SegEs = m_Segment;
-        if (!x86BiosCall (0x10, &regs))
-        {
-           DbgPrint(TRACE_LEVEL_ERROR, ("x86BiosCall failed\n"));
-           return STATUS_UNSUCCESSFUL;
-        }
-        Status = x86BiosReadMemory (
-                    m_Segment,
-                    m_Offset + sizeof (VbeInfo),
-                    &tmpModeInfo,
-                    sizeof(VBE_MODEINFO));
-
-        DbgPrint(TRACE_LEVEL_INFORMATION, ("ModeTemp = 0x%X %dx%d@%d\n", ModeTemp, tmpModeInfo.XResolution, tmpModeInfo.YResolution, tmpModeInfo.BitsPerPixel));
-
-        if (tmpModeInfo.XResolution >= Width &&
-            tmpModeInfo.YResolution >= Height &&
-            tmpModeInfo.BitsPerPixel == BitsPerPixel &&
-            tmpModeInfo.PhysBasePtr != 0)
-        {
-            m_ModeNumbers[SuitableModeCount] = ModeTemp;
-            SetVideoModeInfo(SuitableModeCount, &tmpModeInfo);
-            if (tmpModeInfo.XResolution == MIN_WIDTH_SIZE &&
-                tmpModeInfo.YResolution == MIN_HEIGHT_SIZE)
-            {
-                m_CurrentMode = (USHORT)SuitableModeCount;
-            }
-            SuitableModeCount++;
-        }
+        m_ModeInfo[Idx].BitsPerPlane = 16;
     }
 
-    if (SuitableModeCount == 0)
-    {
-        DbgPrint(TRACE_LEVEL_ERROR, ("No video modes supported\n"));
-        Status = STATUS_UNSUCCESSFUL;
-    }
+    m_ModeInfo[Idx].NumberRedBits = pModeInfo->LinRedMaskSize;
+    m_ModeInfo[Idx].NumberGreenBits = pModeInfo->LinGreenMaskSize;
+    m_ModeInfo[Idx].NumberBlueBits = pModeInfo->LinBlueMaskSize;
+    m_ModeInfo[Idx].RedMask = ((1 << pModeInfo->LinRedMaskSize) - 1) << pModeInfo->LinRedFieldPosition;
+    m_ModeInfo[Idx].GreenMask = ((1 << pModeInfo->LinGreenMaskSize) - 1) << pModeInfo->LinGreenFieldPosition;
+    m_ModeInfo[Idx].BlueMask = ((1 << pModeInfo->LinBlueMaskSize) - 1) << pModeInfo->LinBlueFieldPosition;
+
+    m_ModeInfo[Idx].AttributeFlags = VIDEO_MODE_COLOR | VIDEO_MODE_GRAPHICS | VIDEO_MODE_NO_OFF_SCREEN;
+    m_ModeInfo[Idx].VideoMemoryBitmapWidth = pModeInfo->XResolution;
+    m_ModeInfo[Idx].VideoMemoryBitmapHeight = pModeInfo->YResolution;
+    m_ModeInfo[Idx].DriverSpecificAttributeFlags = 0;
 
     m_ModeCount = SuitableModeCount;
     DbgPrint(TRACE_LEVEL_INFORMATION, ("ModeCount filtered %d\n", m_ModeCount));
-    for (ULONG idx = 0; idx < m_ModeCount; idx++)
-    {
-        DbgPrint(TRACE_LEVEL_INFORMATION, ("type %x, XRes = %d, YRes = %d, BPP = %d\n",
-                                    m_ModeNumbers[idx],
-                                    m_ModeInfo[idx].VisScreenWidth,
-                                    m_ModeInfo[idx].VisScreenHeight,
-                                    m_ModeInfo[idx].BitsPerPlane));
-    }
 
-    if (m_Segment != 0)
-    {
-        x86BiosFreeBuffer (m_Segment, m_Offset);
-    }
     DbgPrint(TRACE_LEVEL_VERBOSE, ("<--- %s\n", __FUNCTION__));
     return Status;
 }
@@ -2414,6 +2282,8 @@ NTSTATUS VgaAdapter::Escape(_In_ CONST DXGKARG_ESCAPE *pEscape)
     DbgPrint(TRACE_LEVEL_VERBOSE, ("<--- %s\n", __FUNCTION__));
     return STATUS_NOT_SUPPORTED;
 }
+
+#endif
 
 VioGpuAdapter::VioGpuAdapter(_In_ VioGpuDod* pVioGpuDod) : IVioGpuAdapter(pVioGpuDod)
 {
